@@ -32,12 +32,24 @@ func encodeValue(buf *bytes.Buffer, v interface{}) error {
 			buf.WriteByte(0xc2)
 		}
 	case float64:
-		buf.WriteByte(0xcb)
-		bits := math.Float64bits(val)
-		for i := 7; i >= 0; i-- {
-			buf.WriteByte(byte(bits >> (i * 8)))
+		if val == float64(int64(val)) {
+			// Integer value, encode as int to save space
+			return encodeSignedInt(buf, int64(val))
+		} else {
+			// Only encode as float64 when it has actual decimal part
+			buf.WriteByte(0xcb)
+			bits := math.Float64bits(val)
+			for i := 7; i >= 0; i-- {
+				buf.WriteByte(byte(bits >> (i * 8)))
+			}
 		}
 	case float32:
+		// Normally, JSON decoding via encoding/json will never produce float32.
+		// This case is only reached when data is manually constructed with float32 values,
+		// e.g., map[string]interface{}{"x": float32(1.23)}.
+		//
+		// Retained for completeness and to support potential non-JSON sources
+		// or advanced use cases where float32 is explicitly used to save space.
 		buf.WriteByte(0xca)
 		bits := math.Float32bits(val)
 		for i := 3; i >= 0; i-- {
@@ -55,28 +67,10 @@ func encodeValue(buf *bytes.Buffer, v interface{}) error {
 			buf.Write([]byte{byte(strLen >> 8), byte(strLen)})
 		}
 		buf.WriteString(val)
-	// 分別處理 signed 整數
-	case int:
-		return encodeSignedInt(buf, int64(val))
-	case int8:
-		return encodeSignedInt(buf, int64(val))
-	case int16:
-		return encodeSignedInt(buf, int64(val))
-	case int32:
-		return encodeSignedInt(buf, int64(val))
-	case int64:
-		return encodeSignedInt(buf, val)
-	// 分別處理 unsigned 整數
-	case uint:
-		return encodeUnsignedInt(buf, uint64(val))
-	case uint8:
-		return encodeUnsignedInt(buf, uint64(val))
-	case uint16:
-		return encodeUnsignedInt(buf, uint64(val))
-	case uint32:
-		return encodeUnsignedInt(buf, uint64(val))
-	case uint64:
-		return encodeUnsignedInt(buf, val)
+	case int, int8, int16, int32, int64:
+		return encodeSignedInt(buf, reflect.ValueOf(val).Int())
+	case uint, uint8, uint16, uint32, uint64:
+		return encodeUnsignedInt(buf, reflect.ValueOf(val).Uint())
 	case []interface{}:
 		length := len(val)
 		if length <= 15 {
@@ -123,7 +117,8 @@ func encodeValue(buf *bytes.Buffer, v interface{}) error {
 			}
 		}
 	default:
-		// 若型別不符合以上情形，嘗試使用 reflection
+		// If the type doesn't match any of the above cases, try using reflection.
+		// This supports user-defined int/uint types, enums, etc.
 		rv := reflect.ValueOf(v)
 		switch rv.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -144,7 +139,6 @@ func encodeSignedInt(buf *bytes.Buffer, n int64) error {
 			buf.WriteByte(byte(n))
 			return nil
 		}
-		// 對於正數，若超出 positive fixint 範圍，可考慮仍使用 signed int 編碼
 		if n <= 255 {
 			buf.WriteByte(0xd0) // int8
 			buf.WriteByte(byte(n))
@@ -173,7 +167,6 @@ func encodeSignedInt(buf *bytes.Buffer, n int64) error {
 			})
 		}
 	} else {
-		// 負數部分
 		if n >= -32 {
 			buf.WriteByte(0xe0 | byte(n+32))
 		} else if n >= -128 {
