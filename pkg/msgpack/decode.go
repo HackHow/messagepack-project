@@ -8,6 +8,7 @@ import (
 	"math"
 )
 
+// DecodeMsgPackToJSON decodes MessagePack binary data into JSON bytes.
 func DecodeMsgPackToJSON(data []byte) ([]byte, error) {
 	buf := bytes.NewBuffer(data)
 	val, err := decodeValue(buf)
@@ -46,6 +47,26 @@ func decodeValue(buf *bytes.Buffer) (interface{}, error) {
 		return false, nil
 	case 0xc3:
 		return true, nil
+
+	// Unsigned integers
+	case 0xcc: // uint8
+		v, _ := buf.ReadByte()
+		return uint64(v), nil
+	case 0xcd: // uint16
+		bs := buf.Next(2)
+		return uint64(bs[0])<<8 | uint64(bs[1]), nil
+	case 0xce: // uint32
+		bs := buf.Next(4)
+		return uint64(bs[0])<<24 | uint64(bs[1])<<16 | uint64(bs[2])<<8 | uint64(bs[3]), nil
+	case 0xcf: // uint64
+		bs := buf.Next(8)
+		v := uint64(0)
+		for i := 0; i < 8; i++ {
+			v = (v << 8) | uint64(bs[i])
+		}
+		return v, nil
+
+	// Signed integers
 	case 0xd0: // int8
 		v, _ := buf.ReadByte()
 		return int8(v), nil
@@ -62,20 +83,40 @@ func decodeValue(buf *bytes.Buffer) (interface{}, error) {
 			v = (v << 8) | int64(bs[i])
 		}
 		return v, nil
+
 	case 0xcb: // float64
 		bs := buf.Next(8)
 		return decodeFloat64(bs), nil
+
+	// Strings
 	case 0xd9: // str8
 		l, _ := buf.ReadByte()
 		return readString(buf, int(l))
+	case 0xda: // str16
+		bs := buf.Next(2)
+		length := int(bs[0])<<8 | int(bs[1])
+		return readString(buf, length)
+
+	// Arrays
 	case 0xdc: // array16
 		bs := buf.Next(2)
 		length := int(bs[0])<<8 | int(bs[1])
 		return readArray(buf, length)
+	case 0xdd: // array32
+		bs := buf.Next(4)
+		length := int(bs[0])<<24 | int(bs[1])<<16 | int(bs[2])<<8 | int(bs[3])
+		return readArray(buf, length)
+
+	// Maps
 	case 0xde: // map16
 		bs := buf.Next(2)
 		length := int(bs[0])<<8 | int(bs[1])
 		return readMap(buf, length)
+	case 0xdf: // map32
+		bs := buf.Next(4)
+		length := int(bs[0])<<24 | int(bs[1])<<16 | int(bs[2])<<8 | int(bs[3])
+		return readMap(buf, length)
+
 	default:
 		return nil, fmt.Errorf("unsupported byte: 0x%x", b)
 	}
