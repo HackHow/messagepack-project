@@ -1,1 +1,1 @@
-package messagepack_project
+package main
