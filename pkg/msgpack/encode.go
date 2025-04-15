@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 )
 
 // EncodeJSONToMsgPack converts JSON bytes to MessagePack format.
+// For round-trip test, we don't enforce deterministic ordering.
 func EncodeJSONToMsgPack(jsonData []byte) ([]byte, error) {
 	var v interface{}
 	if err := json.Unmarshal(jsonData, &v); err != nil {
@@ -21,6 +23,7 @@ func EncodeJSONToMsgPack(jsonData []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// encodeValue encodes a generic value into MessagePack format.
 func encodeValue(buf *bytes.Buffer, v interface{}) error {
 	switch val := v.(type) {
 	case nil:
@@ -33,10 +36,8 @@ func encodeValue(buf *bytes.Buffer, v interface{}) error {
 		}
 	case float64:
 		if val == float64(int64(val)) {
-			// Integer value, encode as int to save space
 			return encodeSignedInt(buf, int64(val))
 		} else {
-			// Only encode as float64 when it has actual decimal part
 			buf.WriteByte(0xcb)
 			bits := math.Float64bits(val)
 			for i := 7; i >= 0; i-- {
@@ -44,12 +45,6 @@ func encodeValue(buf *bytes.Buffer, v interface{}) error {
 			}
 		}
 	case float32:
-		// Normally, JSON decoding via encoding/json will never produce float32.
-		// This case is only reached when data is manually constructed with float32 values,
-		// e.g., map[string]interface{}{"x": float32(1.23)}.
-		//
-		// Retained for completeness and to support potential non-JSON sources
-		// or advanced use cases where float32 is explicitly used to save space.
 		buf.WriteByte(0xca)
 		bits := math.Float32bits(val)
 		for i := 3; i >= 0; i-- {
@@ -93,6 +88,12 @@ func encodeValue(buf *bytes.Buffer, v interface{}) error {
 			}
 		}
 	case map[string]interface{}:
+		// Use lexicographical order for consistent encoding even without ordering guarantee
+		var keys []string
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
 		length := len(val)
 		if length <= 15 {
 			buf.WriteByte(0x80 | byte(length))
@@ -108,17 +109,15 @@ func encodeValue(buf *bytes.Buffer, v interface{}) error {
 				byte(length),
 			})
 		}
-		for k, v := range val {
+		for _, k := range keys {
 			if err := encodeValue(buf, k); err != nil {
 				return err
 			}
-			if err := encodeValue(buf, v); err != nil {
+			if err := encodeValue(buf, val[k]); err != nil {
 				return err
 			}
 		}
 	default:
-		// If the type doesn't match any of the above cases, try using reflection.
-		// This supports user-defined int/uint types, enums, etc.
 		rv := reflect.ValueOf(v)
 		switch rv.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -132,7 +131,7 @@ func encodeValue(buf *bytes.Buffer, v interface{}) error {
 	return nil
 }
 
-// encodeSignedInt encodes a signed integer according to MessagePack spec.
+// encodeSignedInt encodes a signed integer.
 func encodeSignedInt(buf *bytes.Buffer, n int64) error {
 	if n >= 0 {
 		if n <= 127 {
@@ -140,13 +139,13 @@ func encodeSignedInt(buf *bytes.Buffer, n int64) error {
 			return nil
 		}
 		if n <= 255 {
-			buf.WriteByte(0xd0) // int8
+			buf.WriteByte(0xd0)
 			buf.WriteByte(byte(n))
 		} else if n <= 32767 {
-			buf.WriteByte(0xd1) // int16
+			buf.WriteByte(0xd1)
 			buf.Write([]byte{byte(n >> 8), byte(n)})
 		} else if n <= 2147483647 {
-			buf.WriteByte(0xd2) // int32
+			buf.WriteByte(0xd2)
 			buf.Write([]byte{
 				byte(n >> 24),
 				byte(n >> 16),
@@ -154,7 +153,7 @@ func encodeSignedInt(buf *bytes.Buffer, n int64) error {
 				byte(n),
 			})
 		} else {
-			buf.WriteByte(0xd3) // int64
+			buf.WriteByte(0xd3)
 			buf.Write([]byte{
 				byte(n >> 56),
 				byte(n >> 48),
@@ -200,20 +199,20 @@ func encodeSignedInt(buf *bytes.Buffer, n int64) error {
 	return nil
 }
 
-// encodeUnsignedInt encodes an unsigned integer using MessagePack unsigned codes.
+// encodeUnsignedInt encodes an unsigned integer.
 func encodeUnsignedInt(buf *bytes.Buffer, n uint64) error {
 	if n <= 127 {
 		buf.WriteByte(byte(n))
 		return nil
 	}
 	if n <= 0xff {
-		buf.WriteByte(0xcc) // uint8
+		buf.WriteByte(0xcc)
 		buf.WriteByte(byte(n))
 	} else if n <= 0xffff {
-		buf.WriteByte(0xcd) // uint16
+		buf.WriteByte(0xcd)
 		buf.Write([]byte{byte(n >> 8), byte(n)})
 	} else if n <= 0xffffffff {
-		buf.WriteByte(0xce) // uint32
+		buf.WriteByte(0xce)
 		buf.Write([]byte{
 			byte(n >> 24),
 			byte(n >> 16),
@@ -221,7 +220,7 @@ func encodeUnsignedInt(buf *bytes.Buffer, n uint64) error {
 			byte(n),
 		})
 	} else {
-		buf.WriteByte(0xcf) // uint64
+		buf.WriteByte(0xcf)
 		buf.Write([]byte{
 			byte(n >> 56),
 			byte(n >> 48),

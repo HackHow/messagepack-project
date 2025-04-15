@@ -1,0 +1,14 @@
+{
+  "deviceId": "C0001122",
+  "model": "Bosch-NDP-7512-Z30",
+  "fps": 60,
+  "resolution": "3840x2160",
+  "enabled": true,
+  "frameRateModes": ["normal", "slow-motion"],
+  "features": {
+    "zoom": true,
+    "pan": true,
+    "tilt": true,
+    "motionDetection": false
+  }
+}
