@@ -1,0 +1,9 @@
+{
+  "deviceId": "C7654321",
+  "model": "Hikvision-DS-2CD2T42WD-I",
+  "fps": 25,
+  "resolution": "1280x720",
+  "enabled": false,
+  "irEnabled": true,
+  "nightVision": "auto"
+}
